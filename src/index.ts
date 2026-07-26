@@ -18,6 +18,7 @@ import { errorHandler } from "./shared/middleware/error.middleware";
 import { createServer } from "http";
 import Socket from "@/config/socket";
 import { config } from "./config/env";
+import { log } from "console";
 
 class App {
   public app: express.Application;
@@ -138,24 +139,36 @@ class App {
       logger.info(`🌍 Environment: ${config.NODE_ENV}`);
     });
   }
+
+  public async shutdown(): Promise<void> {
+    try {
+      await DatabaseConfig.destroy();
+      // await RedisConfig.disconnect();
+      logger.info("Database and Redis connections closed");
+      process.exit(0);
+    } catch (error) {
+      logger.error("Error during shutdown: ", error);
+      process.exit(1);
+    }
+  }
 }
 
 const app = new App();
-// app.listen();
+app.listen();
 
-// process.on("SIGINT", async () => {
-//   logger.info("SIGINT received. Shutting down gracefully...");
-//   await app.shutdown();
-// });
-// process.on("SIGTERM", async () => {
-//   logger.info("SIGTERM received. Shutting down gracefully...");
-//   await app.shutdown();
-// });
-// process.on("uncaughtException", async (error) => {
-//   logger.error("Uncaught Exception:", error);
-//   await app.shutdown();
-// });
-// process.on("unhandledRejection", async (reason, promise) => {
-//   logger.error("Unhandled Rejection at:", promise, "reason:", reason);
-//   await app.shutdown();
-// });
+process.on("SIGINT", async () => {
+  logger.info("SIGINT received. Shutting down gracefully...");
+  await app.shutdown();
+});
+process.on("SIGTERM", async () => {
+  logger.info("SIGTERM received. Shutting down gracefully...");
+  await app.shutdown();
+});
+process.on("uncaughtException", async (error) => {
+  logger.error("Uncaught Exception:", error);
+  await app.shutdown();
+});
+process.on("unhandledRejection", async (reason, promise) => {
+  logger.error("Unhandled Rejection at:", promise, "reason:", reason);
+  await app.shutdown();
+});
