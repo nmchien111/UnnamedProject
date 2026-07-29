@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { DBErrorCode } from "../constants/postgresErrorCode";
-import { AppError } from "@/shared/types/error";
+import { AppError } from "@/shared/types/errors";
 
 import {
   QueryFailedError,

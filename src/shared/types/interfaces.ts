@@ -5,7 +5,7 @@ import {
   FindOptionsWhere,
   EntityManager,
 } from "typeorm";
-import { IError } from "./error";
+import { IError } from "./errors";
 
 export type IEntityManager = EntityManager;
 
@@ -74,3 +74,14 @@ export interface IRepository<T> {
     operation: (manager: EntityManager) => Promise<R>,
   ): Promise<R>;
 }
+
+export type CompareOperator = ">=" | ">" | "<=" | "<" | "=";
+export const rangeSuffixes = ["Gte", "Gt", "Eq", "Lte", "Lt"];
+export type RangeSuffix = (typeof rangeSuffixes)[number];
+export const OPERATOR_MAP: Record<RangeSuffix, CompareOperator> = {
+  Gte: ">=",
+  Gt: ">",
+  Lte: "<=",
+  Lt: "<",
+  Eq: "=",
+};
