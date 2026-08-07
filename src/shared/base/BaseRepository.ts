@@ -296,10 +296,10 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
     options: IFindPaginationOptions<T>,
     manager?: EntityManager,
     includeDeleted: boolean = false,
-  ): Promise<{ data: T[]; total: number; sumary?: any }> {
-    const page = options.skip? || 1;
+  ): Promise<{ data: T[]; total: number; summary?: any }> {
+    const page = options.skip || 1;
     const size = options.take || 20;
-    
+
     const repo = this.getRepository(manager);
     const qb = repo.createQueryBuilder("entity");
 
@@ -309,8 +309,8 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
     if (allRelations && Object.keys(allRelations).length > 0) {
       this.joinRelations(qb, allRelations, "entity");
     }
-    
-    if (options.keyword ){
+
+    if (options.keyword) {
       let textSearchableFields: string[] = [];
 
       const resolveFieldAlias = (field: string): string | null => {
@@ -335,19 +335,21 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
       } else {
         // auto detect using typeorm native
         const autoDetectedFields = repo.metadata.columns
-        .filter ((col) => {
-          const type = col.type;
-          return (
-            type === String ||
-            ["varchar", "text", "nvarchar", "longtext"].includes(type as string)
-          );
-        })
-        .map((col) => `entity.${col.propertyName}`);
+          .filter((col) => {
+            const type = col.type;
+            return (
+              type === String ||
+              ["varchar", "text", "nvarchar", "longtext"].includes(
+                type as string,
+              )
+            );
+          })
+          .map((col) => `entity.${col.propertyName}`);
 
         textSearchableFields.push(...autoDetectedFields);
 
-        const allRelations = {... this.relations, ...options.relations};
-        if (allRelations){
+        const allRelations = { ...this.relations, ...options.relations };
+        if (allRelations) {
           Object.keys(allRelations).forEach((relationKey) => {
             ["name", "code"].forEach((col) => {
               const resolved = resolveFieldAlias(`${relationKey}.${col}`);
@@ -388,14 +390,14 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
 
     // ==== Filter ====
     // Filter theo storeId nếu entity có field storeId
-    if(options.storeId){
+    if (options.storeId) {
       const entityMetadata = repo.metadata;
       const hasTenantIdColumn = entityMetadata.columns.some(
-        (col) => col.propertyName === 'storeId'
+        (col) => col.propertyName === "storeId",
       );
-      if(hasTenantIdColumn){
-        qb.andWhere('entity.storeId = :storeId', { 
-          storeId: options.storeId 
+      if (hasTenantIdColumn) {
+        qb.andWhere("entity.storeId = :storeId", {
+          storeId: options.storeId,
         });
       }
     }
@@ -404,12 +406,16 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
     // Xử lý các trường range filter từ moreQuery hoặc options
     const rangeFilterSource = options.moreQuery || options;
 
-    if( rangeFilterSource && typeof rangeFilterSource === "object") {
+    if (rangeFilterSource && typeof rangeFilterSource === "object") {
       const entityMetadata = repo.metadata;
-      const entityColumns = entityMetadata.columns.map(col => col.propertyName);
+      const entityColumns = entityMetadata.columns.map(
+        (col) => col.propertyName,
+      );
 
       Object.keys(rangeFilterSource).forEach((key) => {
-        const matchedSuffix = rangeSuffixes.find(suffix => key.endsWith(suffix));
+        const matchedSuffix = rangeSuffixes.find((suffix) =>
+          key.endsWith(suffix),
+        );
         if (matchedSuffix) {
           // Cắt suffix để lấy tên field
           const fieldName = key.slice(0, -matchedSuffix.length);
@@ -427,10 +433,575 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
               });
             }
           }
-        }        
-      })
-    }  
+        }
+      });
+    }
+
+    if (includeDeleted) {
+      qb.andWhere("entity.deletedAt IS NOT NULL");
+    } else {
+      qb.andWhere("entity.deletedAt IS NULL");
+    }
+
+    if (options.status !== "undefined") {
+      qb.andWhere("entity.status = :status", { status: options.status });
+    }
+
+    if (options.type !== "undefined") {
+      const hasTypeColumn = repo.metadata.columns.some(
+        (col) => col.propertyName === "type",
+      );
+
+      if (hasTypeColumn) {
+        qb.andWhere("entity.type = :type", { type: options.type });
+      }
+    }
+
+    if (options.isFinished !== undefined) {
+      qb.andWhere("entity.isFinished = :isFinished", {
+        isFinished: options.isFinished,
+      });
+    }
+
+    // BETWEEN createdAt
+    if (options.startAt && options.endAt) {
+      const dateField = options.dateFilter || "createdAt";
+      qb.andWhere(`entity.${dateField} BETWEEN :start AND :end`, {
+        start: new Date(options.startAt),
+        end: new Date(options.endAt),
+      });
+    }
+
+    // ===== Sorting =====
+    if (options.sortBy && options.sortOrder) {
+      let softField: string | null = null;
+
+      // Nếu sortBy có dấu chấm (relation field), kiểm tra xem relation đã được join chưa
+      if (options.sortBy.includes(".")) {
+        const [relationName] = options.sortBy.split(".");
+        const isJoined = (qb as any).expressionMap.joinAttributes.some(
+          (join: any) => join.relation?.propertyName === relationName,
+        );
+
+        if (isJoined) {
+          softField = options.sortBy;
+        }
+      } else {
+        // Chỉ cho phép sort theo các field có trong entity
+        const entityColumns = repo.metadata.columns.map(
+          (col) => col.propertyName,
+        );
+        if (entityColumns.includes(options.sortBy)) {
+          softField = `entity.${options.sortBy}`;
+        }
+        // Nếu không phải column thì bỏ qua, để repo con tự custom
+      }
+
+      // Nếu softField được xác định, apply orderBy
+      if (softField) {
+        qb.orderBy(softField, options.sortOrder);
+      }
+      // Nếu không xác định được softField, repo con có thể override extendQueryBuilder để custom sort
+    } else {
+      // Default sort by createdAt DESC
+      qb.orderBy("entity.createdAt", "DESC");
+    }
+
+    let summary: any = {};
+    if (options.summaryFields && options.summaryFields.length > 0) {
+      const summaryQb = qb.clone();
+
+      // Xóa skip và take khỏi summary query
+      summaryQb.skip(0).take(undefined as any);
+
+      // Xóa order by để tối ưu performance
+      (summaryQb as any).expressionMap.orderBys = [];
+
+      //Lưu lại các computed selects (có prefix entity_) trước khi xóa
+      const computedSelects =
+        (summaryQb as any).expressionMap.selects.filter((select: any) =>
+          select.aliasName?.startsWith("entity_"),
+        ) || [];
+
+      // Xóa joins không cần thiết (giữ lại selects cho computed fields)
+      (summaryQb as any).expressionMap.joinAttributes = [];
+
+      // Build sum selects
+      const sumSelects: string[] = [];
+
+      options.summaryFields.forEach((field) => {
+        const fieldStr = String(field);
+
+        // Kiểm tra xem field có phải là computed field không
+        // Thử tìm cả camelCase và lowercase
+        let computedSelect = computedSelects.find(
+          (s: any) => s.aliasName === `entity_${fieldStr}`,
+        );
+
+        // Nếu không tìm thấy, thử lowercase
+        if (!computedSelect) {
+          computedSelect = computedSelects.find(
+            (s: any) => s.aliasName === `entity_${fieldStr.toLowerCase()}`,
+          );
+        }
+
+        if (computedSelect) {
+          // Nếu là computed field, wrap subquery trong SUM
+          // Lấy expression gốc từ computed select
+          const subqueryExpression = computedSelect.selection;
+          sumSelects.push(
+            `COALESCE(SUM((${subqueryExpression})), 0) as ${fieldStr}_sum`,
+          );
+        } else {
+          // Nếu là column thông thường
+          sumSelects.push(
+            `COALESCE(SUM(entity.${fieldStr}), 0) as ${fieldStr}_sum`,
+          );
+        }
+      });
+
+      // Clear selects và set lại với sum
+      (summaryQb as any).expressionMap.selects = [];
+      summaryQb.select(sumSelects);
+
+      const summaryResult = await summaryQb.getRawOne();
+
+      // Map kết quả summary - xử lý lowercase keys
+      options.summaryFields.forEach((field) => {
+        const fieldStr = String(field);
+        // PostgreSQL trả về lowercase key
+        const summaryKey = `${fieldStr.toLowerCase()}_sum`;
+        const value = summaryResult[summaryKey];
+
+        // Nếu field đã có prefix "total" thì giữ nguyên, không thêm "total" nữa
+        const summaryFieldName = fieldStr.toLowerCase().startsWith("total")
+          ? fieldStr
+          : `total${fieldStr.charAt(0).toUpperCase() + fieldStr.slice(1)}`;
+
+        summary[summaryFieldName] = parseFloat(value) || 0;
+      });
+    }
+
+    qb.skip((page - 1) * size).take(size);
+
+    // ===== Execute =====
+    const hasGroupBy = (qb as any).expressionMap?.groupBys?.length > 0;
+    const hasExtraSelect = (qb as any).expressionMap?.selects?.some((s: any) =>
+      s.aliasName?.startsWith("entity_"),
+    );
+
+    if (hasGroupBy || hasExtraSelect) {
+      const [rawAndEntities, total] = await Promise.all([
+        qb.getRawAndEntities(),
+        qb.getCount(),
+      ]);
+      let data = this.mapRawEntities(rawAndEntities);
+      if (this.enableFileAttachment && Array.isArray(data)) {
+        data = await this.attachFilesToEntities(data);
+      }
+      return {
+        data,
+        total,
+        summary: Object.keys(summary).length > 0 ? summary : undefined,
+      };
+    } else {
+      const [data, total] = await qb.getManyAndCount();
+      let finalData = data;
+      if (this.enableFileAttachment && Array.isArray(data)) {
+        finalData = await this.attachFilesToEntities(data);
+      }
+
+      return {
+        data: finalData,
+        total,
+        summary: Object.keys(summary).length > 0 ? summary : undefined,
+      };
+    }
   }
 
-  
+  async findByOptions(
+    options: FindManyOptions<T>,
+    manager?: EntityManager,
+  ): Promise<T[]> {
+    const data = await this.getRepository(manager).find(options);
+    if (this.enableFileAttachment && Array.isArray(data)) {
+      return await this.attachFilesToEntities(data);
+    }
+    return data;
+  }
+
+  async findByOption(
+    options: FindOneOptions<T>,
+    manager?: EntityManager,
+    includeDeleted: boolean = false,
+  ): Promise<T | null> {
+    if (!includeDeleted) {
+      options.where = { ...options.where, deletedAt: IsNull() } as any;
+    }
+    const data = await this.getRepository(manager).findOne(options);
+    if (this.enableFileAttachment && data) {
+      return await this.attachFilesToEntity(data);
+    }
+    return data;
+  }
+
+  /**
+   * Attach files to a single entity
+   * Tự động gọi khi query chi tiết entity
+   */
+
+  private async attachFilesToEntity(entity: T & { id?: string }): Promise<T> {
+    if (!entity || !entity.id) {
+      return entity;
+    }
+
+    try {
+      // Get File repository from store schema
+      const fileRepo = this.dataSource.getRepository("File");
+
+      // Collect all entity IDs (root + nested)
+      const collectedIds: string[] = [entity.id];
+
+      //Helper function to get value from path (e.g., 'lines.productVariant')
+      const getValueByPath = (obj: any, path: string): any[] => {
+        const parts = path.split(".");
+        let current: any = obj;
+
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i];
+          if (!current) {
+            return [];
+          }
+
+          // If current is an array, map over each item to get the property
+          if (Array.isArray(current)) {
+            const mapped = current
+              .map((item) => item?.[parts[i]])
+              .filter((val) => val !== null && val !== undefined);
+            current = mapped;
+          } else {
+            // Normal object property access
+            current = current[part];
+
+            if (!current) {
+              return [];
+            }
+          }
+        }
+
+        // Flatten if result is nested array
+        if (Array.isArray(current)) {
+          return current.flat();
+        }
+        if (current && typeof current === "object") {
+          return [current];
+        }
+        return [];
+      };
+
+      // Collect nested entity IDs based on nestedFileFields
+      if (this.nestedFileFields && this.nestedFileFields.length > 0) {
+        for (const fieldPath of this.nestedFileFields) {
+          const values = getValueByPath(entity, fieldPath);
+
+          for (const item of values) {
+            if (item && typeof item === "object" && item.id) {
+              collectedIds.push(item.id);
+            }
+          }
+        }
+      }
+
+      // Get files for all collected IDs
+      const files = await fileRepo.find({
+        where: {
+          entityId: In(collectedIds),
+          status: FileStatusEnum.ACTIVE,
+          deletedAt: null,
+        } as any,
+        order: { createdAt: "ASC" } as any,
+      });
+
+      // Group files by entityId and category
+      const filesByEntity: Record<string, Record<string, any[]>> = {};
+
+      for (const file of files) {
+        const entityId = (file as any).entityId;
+        if (!entityId) continue;
+
+        if (!filesByEntity[entityId]) {
+          filesByEntity[entityId] = {};
+        }
+
+        const category = (file as any).category || "uncategorized";
+        if (!filesByEntity[entityId][category]) {
+          filesByEntity[entityId][category] = [];
+        }
+
+        filesByEntity[entityId][category].push(file);
+      }
+
+      // Attach files to root entity
+      const entAny: any = { ...entity };
+      if (entity.id && filesByEntity[entity.id]) {
+        Object.assign(entAny, filesByEntity[entity.id]);
+      }
+
+      // Attach files to nested entities based on paths
+      if (this.nestedFileFields && this.nestedFileFields.length > 0) {
+        for (const fieldPath of this.nestedFileFields) {
+          const parts = fieldPath.split(".");
+          let current: any = entAny;
+
+          // Navigate to parent of target field
+          for (let i = 0; i < parts.length - 1; i++) {
+            if (!current[parts[i]]) break;
+            current = current[parts[i]];
+          }
+
+          const lastPart = parts[parts.length - 1];
+
+          // Attach files to array items
+          if (Array.isArray(current)) {
+            for (let i = 0; i < current.length; i++) {
+              const item = current[i];
+              if (!item) continue;
+
+              const target = parts.length === 1 ? item : item[lastPart];
+
+              if (Array.isArray(target)) {
+                // Target is array
+                item[lastPart] = target.map((subItem: any) => {
+                  if (!subItem || !subItem.id) return subItem;
+                  const childFiles = filesByEntity[subItem.id] || {};
+                  return { ...subItem, ...childFiles };
+                });
+              } else if (target && typeof target === "object" && target.id) {
+                // Target is single object
+                const childFiles = filesByEntity[target.id] || {};
+                item[lastPart] = { ...target, ...childFiles };
+              } else if (parts.length === 1 && item.id) {
+                // Direct array item
+                const childFiles = filesByEntity[item.id] || {};
+                current[i] = { ...item, ...childFiles };
+              }
+            }
+          } else if (current[lastPart]) {
+            // Handle nested field (array or single object)
+            const target = current[lastPart];
+
+            if (Array.isArray(target)) {
+              // Target is array - attach files to each item
+              current[lastPart] = target.map((item: any) => {
+                if (!item || !item.id) return item;
+                const childFiles = filesByEntity[item.id] || {};
+                return { ...item, ...childFiles };
+              });
+            } else if (target && typeof target === "object" && target.id) {
+              // Target is single object
+              const childFiles = filesByEntity[target.id] || {};
+              current[lastPart] = { ...target, ...childFiles };
+            }
+          }
+        }
+      }
+
+      return entAny as T;
+    } catch (error) {
+      // Silent fail - không ảnh hưởng query chính
+      logger.warn(`Failed to attach files to entity ${entity.id}:`, error);
+      return entity;
+    }
+  }
+
+  /**
+   * Attach files to multiple entities
+   * Tự động gọi khi query danh sách entities
+   */
+  private async attachFilesToEntities(
+    entities: (T & { id?: string })[],
+  ): Promise<T[]> {
+    if (!entities || entities.length === 0) {
+      return entities;
+    }
+
+    try {
+      const collectedIds: string[] = [];
+
+      // Helper function to get value from path
+      const getValueByPath = (obj: any, path: string): any[] => {
+        const parts = path.split(".");
+        let current: any = obj;
+
+        for (let i = 0; i < parts.length; i++) {
+          const part = parts[i];
+
+          if (!current) {
+            return [];
+          }
+
+          // If current is an array, map over each item to get the property
+          if (Array.isArray(current)) {
+            const mapped = current
+              .map((item) => item?.[part])
+              .filter((val) => val !== null && val !== undefined);
+            current = mapped;
+          } else {
+            // Normal object property access
+            current = current[part];
+
+            if (!current) {
+              return [];
+            }
+          }
+        }
+
+        // Flatten if result is nested array
+        if (Array.isArray(current)) {
+          return current.flat();
+        }
+        if (current && typeof current === "object") {
+          return [current];
+        }
+        return [];
+      };
+
+      // Collect all entity IDs
+      for (const e of entities) {
+        if (e.id) collectedIds.push(e.id as string);
+
+        // Collect nested IDs based on nestedFileFields
+        if (this.nestedFileFields && this.nestedFileFields.length > 0) {
+          for (const fieldPath of this.nestedFileFields) {
+            const values = getValueByPath(e, fieldPath);
+
+            for (const item of values) {
+              if (item && typeof item === "object" && item.id) {
+                collectedIds.push(item.id);
+              }
+            }
+          }
+        }
+      }
+
+      const uniqueIds = Array.from(new Set(collectedIds));
+      if (uniqueIds.length === 0) return entities;
+
+      // Get File repository from store schema
+      const fileRepo = this.dataSource.getRepository("File");
+      const allFiles = await fileRepo.find({
+        where: {
+          entityId: In(uniqueIds),
+          status: FileStatusEnum.ACTIVE,
+          deletedAt: null,
+        } as any,
+        order: { createdAt: "ASC" } as any,
+      });
+
+      if (allFiles.length > 0) {
+        allFiles.slice(0, 5).forEach((f: any) => {});
+        if (allFiles.length > 5) {
+        }
+      }
+
+      // Group files by entityId and category
+      const filesByEntity: Record<string, Record<string, any[]>> = {};
+
+      for (const file of allFiles) {
+        const entityId = (file as any).entityId;
+        if (!entityId) continue;
+
+        if (!filesByEntity[entityId]) {
+          filesByEntity[entityId] = {};
+        }
+
+        const category = (file as any).category || "uncategorized";
+        if (!filesByEntity[entityId][category]) {
+          filesByEntity[entityId][category] = [];
+        }
+
+        filesByEntity[entityId][category].push(file);
+      }
+
+      // Attach files to root entities and nested entities
+      return entities.map((entity) => {
+        if (!entity.id) return entity;
+
+        const entAny: any = { ...entity };
+
+        // Attach files to root entity
+        if (entity.id && filesByEntity[entity.id]) {
+          Object.assign(entAny, filesByEntity[entity.id]);
+        }
+
+        // Attach files to nested entities based on paths
+        if (this.nestedFileFields && this.nestedFileFields.length > 0) {
+          for (const fieldPath of this.nestedFileFields) {
+            const parts = fieldPath.split(".");
+            let current: any = entAny;
+
+            // Navigate to parent of target field
+            for (let i = 0; i < parts.length - 1; i++) {
+              if (!current[parts[i]]) break;
+              current = current[parts[i]];
+            }
+
+            const lastPart = parts[parts.length - 1];
+
+            // Attach files to array items
+            if (Array.isArray(current)) {
+              for (let i = 0; i < current.length; i++) {
+                const item = current[i];
+                if (!item) continue;
+
+                const target = parts.length === 1 ? item : item[lastPart];
+
+                if (Array.isArray(target)) {
+                  // Target is array
+                  item[lastPart] = target.map((subItem: any) => {
+                    if (!subItem || !subItem.id) return subItem;
+                    const childFiles = filesByEntity[subItem.id] || {};
+                    return { ...subItem, ...childFiles };
+                  });
+                } else if (target && typeof target === "object" && target.id) {
+                  // Target is single object
+                  const childFiles = filesByEntity[target.id] || {};
+                  item[lastPart] = { ...target, ...childFiles };
+                } else if (parts.length === 1 && item.id) {
+                  // Direct array item
+                  const childFiles = filesByEntity[item.id] || {};
+                  current[i] = { ...item, ...childFiles };
+                }
+              }
+            } else if (current[lastPart]) {
+              // Handle nested field (array or single object)
+              const target = current[lastPart];
+
+              if (Array.isArray(target)) {
+                // Target is array - attach files to each item
+                current[lastPart] = target.map((item: any) => {
+                  if (!item || !item.id) return item;
+                  const childFiles = filesByEntity[item.id] || {};
+                  return { ...item, ...childFiles };
+                });
+              } else if (target && typeof target === "object" && target.id) {
+                // Target is single object
+                const childFiles = filesByEntity[target.id] || {};
+                current[lastPart] = { ...target, ...childFiles };
+              }
+            }
+          }
+        }
+
+        return entAny as T;
+      });
+    } catch (error) {
+      // Silent fail - không ảnh hưởng query chính
+      logger.warn(
+        `Failed to attach files to ${entities.length} entities:`,
+        error,
+      );
+      return entities;
+    }
+  }
 }
