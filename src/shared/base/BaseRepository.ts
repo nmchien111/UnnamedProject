@@ -645,6 +645,26 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
     return data;
   }
 
+  async findAndCount(
+    options: FindManyOptions<T>,
+    manager?: EntityManager,
+    includeDeleted: boolean = false,
+  ): Promise<[T[], number]> {
+    if (!includeDeleted) {
+      options.where = { ...options.where, deletedAt: IsNull() } as any;
+    } else {
+      options.withDeleted = true;
+    }
+    return await this.getRepository(manager).findAndCount(options);
+  }
+
+  async create(data: DeepPartial<T>, manager?: EntityManager): Promise<T> {
+    const repo = this.getRepository(manager);
+    const entity = repo.create(data);
+    const saved = await repo.save(entity);
+    return saved;
+  }
+
   /**
    * Attach files to a single entity
    * Tự động gọi khi query chi tiết entity
@@ -1002,6 +1022,90 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
         error,
       );
       return entities;
+    }
+  }
+
+  /**
+   * Handle files after entity creation
+   * Chuyển files từ tempId sang realId và active
+   * Tự động xử lý nested entities thông qua nestedFileFields
+   */
+  protected async handleFilesAfterCreate(
+    entityId: string,
+    tempId: string,
+    savedEntity?: any,
+  ): Promise<void> {
+    if (!tempId) return;
+
+    try {
+      const fileRepo = this.dataSource.getRepository("File");
+
+      // Update files with tempId to have entityId = entity.id and status = ACTIVE
+      const result = await fileRepo.update(
+        { entityId: tempId },
+        {
+          entityId: entityId,
+          status: FileStatusEnum.ACTIVE,
+          expiredAt: null,
+        },
+      );
+
+      logger.info(
+        `Updated ${result.affected} files from tempId ${tempId} to entityId ${entityId}`,
+      );
+      logger.info(
+        `Updated files from tempId ${tempId} to entityId ${entityId}`,
+      );
+
+      if (
+        savedEntity &&
+        this.nestedFileFields &&
+        this.nestedFileFields.length > 0
+      ) {
+        for (const fieldKey of this.nestedFileFields) {
+          const nestedData = savedEntity[fieldKey];
+
+          if (Array.isArray(nestedData) && nestedData.length > 0) {
+            for (const nestedItem of nestedData) {
+              if (nestedItem && nestedItem.id && nestedItem.tempId) {
+                await fileRepo.update(
+                  { entityId: nestedItem.tempId },
+                  {
+                    entityId: nestedItem.id,
+                    status: FileStatusEnum.ACTIVE,
+                    expiredAt: null,
+                  },
+                );
+                logger.info(
+                  `Updated files from tempId ${nestedItem.tempId} to entityId ${nestedItem.id} for nested field ${fieldKey}`,
+                );
+              }
+            }
+          } else if (
+            nestedData &&
+            nestedData.id &&
+            nestedData.tempId &&
+            typeof nestedData === "object"
+          ) {
+            await fileRepo.update(
+              { entityId: nestedData.tempId },
+              {
+                entityId: nestedData.id,
+                status: FileStatusEnum.ACTIVE,
+                expiredAt: null,
+              },
+            );
+            logger.info(
+              `Updated files from tempId ${nestedData.tempId} to entityId ${nestedData.id} for nested field ${fieldKey}`,
+            );
+          }
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        `Failed to handle files after create for entity ${entityId}:`,
+        error,
+      );
     }
   }
 }
