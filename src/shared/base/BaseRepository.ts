@@ -662,7 +662,53 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
     const repo = this.getRepository(manager);
     const entity = repo.create(data);
     const saved = await repo.save(entity);
+
+    // Handle files after creation: move files from tempId to realId
+    const tempId = (saved as any).tempId;
+    const id = (saved as any).id;
+    if (tempId && id) {
+      await this.handleFilesAfterCreate(id, tempId, saved);
+    }
+
     return saved;
+  }
+
+  /**
+   * Create many
+   */
+  async createMany(
+    data: DeepPartial<T>[],
+    manager?: EntityManager,
+  ): Promise<T[]> {
+    const repo = this.getRepository(manager);
+    const entities = repo.create(data as any[]);
+    const saved = await repo.save(entities);
+    return saved as T[];
+  }
+
+  async update(
+    id: string,
+    data: Partial<T>,
+    manager?: EntityManager,
+  ): Promise<T | null> {
+    const repo = this.getRepository(manager);
+    await repo.update(id, data as any);
+
+    // Get updated entity để xử lý nested files
+    const updatedEntity = await repo.findOne({
+      where: { id } as any,
+      relations: this.relations,
+    });
+
+    await this.handleFilesOnUpdate(id, manager, updatedEntity);
+
+    if (manager) {
+      if (updatedEntity && this.enableFileAttachment) {
+        await this.attachFilesToEntity(updatedEntity as any);
+      }
+      return updatedEntity || null;
+    }
+    return this.findById(id);
   }
 
   /**
@@ -1104,6 +1150,200 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
     } catch (error) {
       logger.warn(
         `Failed to handle files after create for entity ${entityId}:`,
+        error,
+      );
+    }
+  }
+
+  /**
+   * Handle files after entity update
+   * Activate all files linked to entity
+   * Tự động xử lý nested entities thông qua nestedFileFields
+   */
+
+  protected async handleFilesOnUpdate(
+    entityId: string,
+    manager?: EntityManager,
+    updatedEntity?: any,
+  ): Promise<void> {
+    try {
+      const fileRepo = manager
+        ? manager.getRepository("File")
+        : this.dataSource.getRepository("File");
+
+      //nếu mutipleFile = false, xóa files cũ trước khi activate files mới
+      if (!this.mutileFile) {
+        // Get all pending files for this entity (files mới upload)
+        const pendingFile = await fileRepo.find({
+          where: {
+            entityId: entityId,
+            status: FileStatusEnum.PENDING,
+            deletedAt: null,
+          } as any,
+          order: { createdAt: "DESC" } as any,
+        });
+
+        // Group pending files by category
+        const pendingByCategory: Record<string, any[]> = {};
+        for (const file of pendingFile) {
+          const category = (file as any).category || "default";
+          if (!pendingByCategory[category]) {
+            pendingByCategory[category] = [];
+          }
+          pendingByCategory[category].push(file);
+        }
+
+        // For each category, delete old active files
+        for (const [category, files] of Object.entries(pendingByCategory)) {
+          if (files.length > 0) {
+            // Soft delete old active files in this category
+            await fileRepo
+              .createQueryBuilder()
+              .softDelete()
+              .where("entityId = :entityId", { entityId })
+              .andWhere("category = :category", { category })
+              .andWhere("status = :status", { status: FileStatusEnum.ACTIVE })
+              .andWhere("deletedAt IS NULL")
+              .execute();
+
+            logger.info(`Deleted old active files for category "${category}"`);
+          }
+        }
+
+        // Activate all pending files
+        await fileRepo
+          .createQueryBuilder()
+          .update()
+          .set({
+            status: FileStatusEnum.ACTIVE,
+            expiresAt: null,
+          })
+          .where("entityId = :entityId", { entityId })
+          .andWhere("status = :status", { status: FileStatusEnum.PENDING })
+          .andWhere("deletedAt IS NULL")
+          .execute();
+
+        // Xử lý files cho nested entities (ví dụ: variants trong product)
+        if (
+          updatedEntity &&
+          this.nestedFileFields &&
+          this.nestedFileFields.length > 0
+        ) {
+          for (const fieldKey of this.nestedFileFields) {
+            const nestedData = updatedEntity[fieldKey];
+
+            // Kiểm tra nếu là array
+            if (Array.isArray(nestedData) && nestedData.length > 0) {
+              for (const nestedItem of nestedData) {
+                if (nestedItem && nestedItem.id) {
+                  // ⚠️ Nested entities LUÔN chỉ giữ 1 file/category (single file mode)
+                  const pendingFiles = await fileRepo.find({
+                    where: {
+                      entityId: nestedItem.id,
+                      status: FileStatusEnum.PENDING,
+                      deletedAt: null,
+                    } as any,
+                  });
+
+                  const pendingByCategory: Record<string, any[]> = {};
+                  for (const file of pendingFiles) {
+                    const category = (file as any).category || "default";
+                    if (!pendingByCategory[category]) {
+                      pendingByCategory[category] = [];
+                    }
+                    pendingByCategory[category].push(file);
+                  }
+
+                  // Xóa files cũ trước khi activate files mới
+                  for (const [category] of Object.entries(pendingByCategory)) {
+                    await fileRepo
+                      .createQueryBuilder()
+                      .softDelete()
+                      .where("entityId = :entityId", {
+                        entityId: nestedItem.id,
+                      })
+                      .andWhere("category = :category", { category })
+                      .andWhere("status = :status", {
+                        status: FileStatusEnum.ACTIVE,
+                      })
+                      .andWhere("deletedAt IS NULL")
+                      .execute();
+                  }
+
+                  // Activate pending files
+                  await fileRepo
+                    .createQueryBuilder()
+                    .update()
+                    .set({
+                      status: FileStatusEnum.ACTIVE,
+                      expiresAt: null,
+                    })
+                    .where("entityId = :entityId", { entityId: nestedItem.id })
+                    .andWhere("status = :status", {
+                      status: FileStatusEnum.PENDING,
+                    })
+                    .andWhere("deletedAt IS NULL")
+                    .execute();
+                }
+              }
+            } else if (
+              nestedData &&
+              typeof nestedData === "object" &&
+              nestedData.id
+            ) {
+              // ⚠️ Nested entities LUÔN chỉ giữ 1 file/category (single file mode)
+              const pendingFiles = await fileRepo.find({
+                where: {
+                  entityId: nestedData.id,
+                  status: FileStatusEnum.PENDING,
+                  deletedAt: null,
+                } as any,
+              });
+
+              const pendingByCategory: Record<string, any[]> = {};
+              for (const file of pendingFiles) {
+                const category = (file as any).category || "default";
+                if (!pendingByCategory[category]) {
+                  pendingByCategory[category] = [];
+                }
+                pendingByCategory[category].push(file);
+              }
+
+              // Xóa files cũ trước khi activate files mới
+              for (const [category] of Object.entries(pendingByCategory)) {
+                await fileRepo
+                  .createQueryBuilder()
+                  .softDelete()
+                  .where("entityId = :entityId", { entityId: nestedData.id })
+                  .andWhere("category = :category", { category })
+                  .andWhere("status = :status", {
+                    status: FileStatusEnum.ACTIVE,
+                  })
+                  .andWhere("deletedAt IS NULL")
+                  .execute();
+              }
+
+              // Activate pending files
+              await fileRepo
+                .createQueryBuilder()
+                .update()
+                .set({
+                  status: FileStatusEnum.ACTIVE,
+                  expiresAt: null,
+                })
+                .where("entityId = :entityId", { entityId: nestedData.id })
+                .andWhere("status = :status", {
+                  status: FileStatusEnum.PENDING,
+                })
+                .andWhere("deletedAt IS NULL")
+                .execute();
+            }
+          }
+        }
+      }
+    } catch (error) {
+      logger.error(
+        `Failed to handle files on update for entity ${entityId}:`,
         error,
       );
     }
