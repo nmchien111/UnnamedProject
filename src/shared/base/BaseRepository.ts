@@ -712,6 +712,81 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
   }
 
   /**
+   * Delete (hard delete)
+   */
+  async delete(id: string, manager?: EntityManager): Promise<boolean> {
+    // Handle files before deletion
+    await this.handleFilesOnDelete(id, manager);
+
+    const result = await this.getRepository(manager).delete(id as any);
+    return (result.affected ?? 0) > 0;
+  }
+
+  async deleteByCondition(
+    where: FindOptionsWhere<T> | FindOptionsWhere<T>[],
+    manager?: EntityManager,
+  ): Promise<number> {
+    const repo = this.getRepository(manager);
+
+    const result = await repo.delete(where as any);
+
+    return result.affected ?? 0;
+  }
+
+  /**
+   * Soft delete
+   */
+  async softDelete(id: string, manager?: EntityManager): Promise<boolean> {
+    // Handle files before soft deletion
+    await this.handleFilesOnDelete(id, manager);
+
+    const result = await this.getRepository(manager).softDelete(id as any);
+    return (result.affected ?? 0) > 0;
+  }
+
+  /**
+   * Soft delete many
+   */
+  async softDeleteMany(
+    options: FindOptionsWhere<T>,
+    manager?: EntityManager,
+  ): Promise<number> {
+    const result = await this.getRepository(manager).softDelete(options);
+    return result.affected ?? 0;
+  }
+
+  /**
+   * Count
+   */
+  async count(
+    options?: FindManyOptions<T>,
+    manager?: EntityManager,
+  ): Promise<number> {
+    return this.getRepository(manager).count(options);
+  }
+
+  /**
+   * Check exists
+   */
+  async exists(
+    where: FindOptionsWhere<T>,
+    manager?: EntityManager,
+  ): Promise<boolean> {
+    const count = await this.getRepository(manager).count({ where });
+    return count > 0;
+  }
+
+  /**
+   * Query builder
+   */
+  async createQueryBuilder(
+    alias: string,
+    manager?: EntityManager,
+  ): Promise<SelectQueryBuilder<T>> {
+    return this.getRepository(manager).createQueryBuilder(alias);
+  }
+
+  /**
    * Attach files to a single entity
    * Tự động gọi khi query chi tiết entity
    */
@@ -1344,6 +1419,103 @@ export abstract class BaseRepository<T extends ObjectLiteral> {
     } catch (error) {
       logger.error(
         `Failed to handle files on update for entity ${entityId}:`,
+        error,
+      );
+    }
+  }
+
+  /**
+   * Handle files after entity deletion
+   * Delete all files linked to entity (DB + physical storage)
+   * Tự động xử lý nested entities thông qua nestedFileFields
+   */
+  protected async handleFilesOnDelete(
+    entityId: string,
+    manager?: EntityManager,
+  ): Promise<void> {
+    try {
+      const fileRepo = manager
+        ? manager.getRepository("File")
+        : this.dataSource.getRepository("File");
+
+      // Get entity với relations để lấy nested entities
+      const repo = this.getRepository(manager);
+
+      const entity = await repo.findOne({
+        where: { id: entityId } as any,
+        relations: this.relations,
+      });
+
+      // Collect tất cả entityIds cần xóa files (entity chính + nested entities)
+      const entityIdsToDelete: string[] = [entityId];
+
+      // Thu thập IDs của nested entities
+      if (entity && this.nestedFileFields && this.nestedFileFields.length > 0) {
+        for (const fieldKey of this.nestedFileFields) {
+          const nestedData = (entity as any)[fieldKey];
+
+          // Kiểm tra nếu là array
+          if (Array.isArray(nestedData) && nestedData.length > 0) {
+            for (const nestedItem of nestedData) {
+              if (nestedItem && nestedItem.id) {
+                entityIdsToDelete.push(nestedItem.id);
+              }
+            }
+          }
+          // Kiểm tra nếu là object đơn
+          else if (
+            nestedData &&
+            typeof nestedData === "object" &&
+            nestedData.id
+          ) {
+            entityIdsToDelete.push(nestedData.id);
+          }
+        }
+      }
+
+      // Get all files linked to entity và nested entities
+      const files = await fileRepo.find({
+        where: {
+          entityId: In(entityIdsToDelete),
+        } as any,
+      });
+
+      // Delete physical files
+      for (const file of files) {
+        try {
+          const filePath = (file as any).path;
+          const thumbnailPath = (file as any).thumbnailPath;
+
+          if (filePath) {
+            await fs.unlink(filePath).catch(() => {
+              // File might not exist, ignore error
+            });
+          }
+
+          if (thumbnailPath) {
+            await fs.unlink(thumbnailPath).catch(() => {
+              // Thumbnail might not exist, ignore error
+            });
+          }
+        } catch (error) {
+          logger.warn(
+            `Failed to delete physical file ${(file as any).path}:`,
+            error,
+          );
+        }
+      }
+
+      // Delete files from database
+      await fileRepo.delete({
+        entityId: In(entityIdsToDelete),
+      } as any);
+
+      logger.info(
+        `Deleted ${files.length} files for entity ${entityId} and nested entities`,
+      );
+    } catch (error) {
+      logger.error(
+        `Failed to handle files on delete for entity ${entityId}:`,
         error,
       );
     }
