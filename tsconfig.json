@@ -16,7 +16,7 @@
     "declaration": true,
     "declarationMap": true,
     "noUncheckedIndexedAccess": false,
-    "exactOptionalPropertyTypes": true,
+    "exactOptionalPropertyTypes": false,
     "strict": true,
     "jsx": "react-jsx",
     "verbatimModuleSyntax": false,
@@ -36,14 +36,14 @@
     // Khuyên dùng cho TypeORM để tránh lỗi bắt buộc gán giá trị khởi tạo
     "strictPropertyInitialization": false,
 
-    "ignoreDeprecations": "6.0",
+    // "ignoreDeprecations": "6.0",
 
-    //Path
-    "baseUrl": ".",
+    // // Path
+    // "baseUrl": ".",
 
-    //Định nghĩa từ điển ánh xạ (Alias mapping)
+    // Định nghĩa từ điển ánh xạ (Alias mapping)
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src/**/*"],

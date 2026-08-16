@@ -85,3 +85,52 @@ export const OPERATOR_MAP: Record<RangeSuffix, CompareOperator> = {
   Lt: "<",
   Eq: "=",
 };
+
+export interface Pagination {
+  totalRecords: number;
+  currentPage: number;
+  size: number;
+  totalPages: number;
+}
+
+export interface ApiResponse<T = any> {
+  statusCode: number;
+  success: boolean;
+  message: string;
+  data: T;
+  pagination?: Pagination;
+  errors?: any;
+  code?: string;
+  summary?: any; // Optional error code for more specific error handling
+}
+
+export interface IFindOptions<T> extends FindManyOptions<T> {
+  page?: number;
+  size?: number;
+  keyword?: string; // Keyword for text search
+  searchFields?: (keyof T)[]; // Fields to search in
+  timeField?: keyof T; // Field to apply the date range filter on
+  summaryFields?: (keyof T)[]; // Fields to summarize
+  type?: string; // Example field for filtering by type
+  status?: string; // Example field for filtering by status
+  startAt?: Date; // Example field for filtering by date range
+  endAt?: Date; // Example field for filtering by date range
+  sortBy?: string; // Field to sort by
+  sortOrder?: "ASC" | "DESC"; // Sort direction
+  isFinished?: boolean; // Example field for filtering by completion status
+  filterOptions?: (keyof T)[]; // Additional filter options
+  projectId?: string; // Example field for filtering by project ID
+  employeeId?: string; // Example field for filtering by employee ID
+  fundId?: string; // Example field for filtering by fund ID
+  advanceId?: string; // Example field for filtering by advance ID
+
+  storeId?: string;
+  storeIds?: string[];
+  categoryId?: string[];
+  productIds?: string[]; // Example field for filtering by product IDs
+  warehouseIds?: string[]; // Example field for filtering by warehouse IDs
+  employeeIds?: string[]; // Example field for filtering by employee IDs
+  fundCategoryIds?: string[]; // Example field for filtering by fundCategory IDs
+  partnerIds?: string[]; // Example field for filtering by partner IDs
+  toFundIds?: string[]; // Example field for filtering by fund IDs
+}
