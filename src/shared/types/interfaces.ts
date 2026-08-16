@@ -93,6 +93,20 @@ export interface Pagination {
   totalPages: number;
 }
 
+export interface SendResponseParams {
+  res: Response;
+  data?: any;
+  message?: string;
+  statusCode?: number;
+}
+
+export interface SendErrorParams {
+  res: Response;
+  message?: string;
+  statusCode?: number;
+  errors?: IError[];
+}
+
 export interface ApiResponse<T = any> {
   statusCode: number;
   success: boolean;

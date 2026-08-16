@@ -1,4 +1,5 @@
 import { injectable } from "inversify";
+import { Request } from "express";
 import {
   EntityManager,
   FindManyOptions,
@@ -114,7 +115,7 @@ export abstract class BaseService<T extends ObjectLiteral> {
   /**
    * Find all
    */
-  async findAll(options: FindManyOptions): Promise<T[]> {
+  async findAll(options?: FindManyOptions): Promise<T[]> {
     const data = await this.repository.find(options);
     const json = JSON.stringify(data);
     const sizeInKB = Buffer.byteLength(json, "utf8") / 1024;
@@ -135,7 +136,7 @@ export abstract class BaseService<T extends ObjectLiteral> {
    * @param options
    * @returns
    */
-  async findWithPagination(
+  async findAllWithPagination(
     options: IFindOptions<T>,
     manager?: EntityManager,
     req?: Request,
