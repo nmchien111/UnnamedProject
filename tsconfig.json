@@ -20,7 +20,7 @@
     "strict": true,
     "jsx": "react-jsx",
     "verbatimModuleSyntax": false,
-    "isolatedModules": true,
+    "isolatedModules": false,
     // "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
     "skipLibCheck": true,
@@ -28,7 +28,7 @@
     // TypeORM
     "moduleResolution": "node16",
     "experimentalDecorators": true,
-    "emitDecoratorMetadata": true,
+    "emitDecoratorMetadata": false,
 
     // TẮT tính năng này đi nếu "target" là "ES2022" hoặc "ESNext"
     "useDefineForClassFields": false,

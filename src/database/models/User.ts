@@ -1,7 +1,9 @@
-import { Column, Entity, PrimaryGeneratedColumn } from "typeorm";
+import { Column, Entity, ManyToOne, JoinColumn } from "typeorm";
 import { BaseEntity } from "../../shared/base/BaseEntity";
 import { Address } from "../../shared/base/BaseValidator";
 import { GenderEnum } from "../../shared/constants/enum";
+import { Role } from "./Role";
+import { Store } from "./Store";
 
 @Entity({ name: "users" })
 export class User extends BaseEntity {
@@ -54,4 +56,12 @@ export class User extends BaseEntity {
 
   @Column({ type: "uuid", nullable: true, default: null })
   storeId: string | null; // id của cửa hàng mà user thuộc về, null nếu user là admin hệ thống
+
+  @ManyToOne(() => Role, { onDelete: "RESTRICT" })
+  @JoinColumn({ name: "roleId" })
+  role: Role; // role của user, không thể null vì user phải có role
+
+  @ManyToOne(() => Store, { onDelete: "SET NULL" })
+  @JoinColumn({ name: "storeId" })
+  store: Store | null; // cửa hàng mà user thuộc về, null nếu user là admin hệ thống
 }
