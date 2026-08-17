@@ -86,6 +86,23 @@ export const OPERATOR_MAP: Record<RangeSuffix, CompareOperator> = {
   Eq: "=",
 };
 
+export interface IController {
+  // Controllers will have different methods based on their specific needs
+}
+
+export interface AuthTokens {
+  accessToken: string;
+  refreshToken?: string;
+}
+
+export interface JwtPayload {
+  userId: string;
+  username: string;
+  iat?: number;
+  exp?: number;
+  storeId?: string;
+}
+
 export interface Pagination {
   totalRecords: number;
   currentPage: number;

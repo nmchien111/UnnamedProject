@@ -20,6 +20,14 @@ export const config = {
   DB_USERNAME: process.env.DB_USERNAME || "root",
   DB_PASSWORD: process.env.DB_PASSWORD || "",
   DB_DATABASE: process.env.DB_DATABASE || "backend_db",
+
+  // JWT
+  JWT_ACCESS_SECRET: process.env.JWT_ACCESS_SECRET || "access_secret",
+  JWT_REFRESH_SECRET: process.env.JWT_REFRESH_SECRET || "refresh_secret",
+  JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
+  JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
+
+  OTP_EXPIRES_MINUTES: parseInt(process.env.OTP_EXPIRES_MINUTES || "10", 10),
 };
 
 export default config;
