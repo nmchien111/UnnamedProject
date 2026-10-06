@@ -1,9 +1,10 @@
-import { Column, Entity, ManyToOne, JoinColumn } from "typeorm";
+import { Column, Entity, ManyToOne, JoinColumn, OneToMany } from "typeorm";
 import { BaseEntity } from "../../shared/base/BaseEntity";
 import { Address } from "../../shared/base/BaseValidator";
 import { GenderEnum } from "../../shared/constants/enum";
 import { Role } from "./Role";
-import { Store } from "./Store";
+
+import { UserNotification } from "./UserNotification";
 
 @Entity({ name: "users" })
 export class User extends BaseEntity {
@@ -24,12 +25,6 @@ export class User extends BaseEntity {
 
   @Column({ type: "varchar", length: 255, nullable: true, default: null })
   email: string | null;
-
-  @Column({ type: "text", nullable: true, default: null })
-  note: string | null;
-
-  @Column({ type: "uuid", nullable: true, default: null })
-  positionId: string | null;
 
   @Column({ type: "jsonb", nullable: true, default: null })
   address: Address | null; // danh sách địa chỉ
@@ -54,14 +49,10 @@ export class User extends BaseEntity {
   @Column({ type: "uuid", nullable: true, default: null })
   roleId: string | null; // id của role
 
-  @Column({ type: "uuid", nullable: true, default: null })
-  storeId: string | null; // id của cửa hàng mà user thuộc về, null nếu user là admin hệ thống
-
   @ManyToOne(() => Role, { onDelete: "RESTRICT" })
   @JoinColumn({ name: "roleId" })
   role: Role; // role của user, không thể null vì user phải có role
 
-  @ManyToOne(() => Store, { onDelete: "SET NULL" })
-  @JoinColumn({ name: "storeId" })
-  store: Store | null; // cửa hàng mà user thuộc về, null nếu user là admin hệ thống
+  @OneToMany(() => UserNotification, (notification) => notification.user)
+  userNotifications?: UserNotification[];
 }
